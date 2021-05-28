@@ -36,20 +36,18 @@
         <echo message="Copying lib files" />
         <copy todir="${project.build.directory}/generated-resources/ch/vorburger/mariadb4j/mariadb-${mariaDB.version}/linux/libs">
             <fileset dir="${project.build.directory}/mariadb-${mariaDB.version}-linux-x86_64/lib">
-                <include name="libmariadb.so*"/>
-                <include name="libmariadbclient*"/>
-                <include name="libmysql*"/>
+                <include name="lib*"/>
             </fileset>
         </copy>
         <echo message="Copying bin files" />
         <copy todir="${project.build.directory}/generated-resources/ch/vorburger/mariadb4j/mariadb-${mariaDB.version}/linux/bin">
             <fileset dir="${project.build.directory}/mariadb-${mariaDB.version}-linux-x86_64/bin">
+                <include name="mariadb"/>
+                <include name="mariadbd"/>
+                <include name="mariadb-dump"/>
                 <include name="mysql"/>
                 <include name="mysqld"/>
                 <include name="mysqldump"/>
-                <include name="mysqlcheck"/>
-                <include name="my_print_defaults"/>
-                <include name="resolveip"/>
             </fileset>
         </copy>
         <copy todir="${project.build.directory}/generated-resources/ch/vorburger/mariadb4j/mariadb-${mariaDB.version}/linux/bin">
