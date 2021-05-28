@@ -27,6 +27,8 @@ import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.lang3.SystemUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Builder for DBConfiguration. Has lot's of sensible default conventions etc.
@@ -248,20 +250,30 @@ public class DBConfigurationBuilder {
         return this;
     }
 
+    private static final String LINUX_VERSION = "10.5.10";
+    private static final String BAD_OS_VERSION = "10.2.11";
+
     protected String _getDatabaseVersion() {
+        Logger logger = LoggerFactory.getLogger(getClass());
         String databaseVersion = getDatabaseVersion();
         if (databaseVersion == null) {
-            if (OSX.equals(getOS()))
-                databaseVersion = "mariadb-10.3.16";
-            else if (LINUX.equals(getOS()))
-                databaseVersion = "mariadb-10.3.16";
-            else if (WIN32.equals(getOS()))
-                databaseVersion = "mariadb-10.3.16";
-            else
-                throw new IllegalStateException(
+            String mariaDbVersion = switch (getOS()) {
+                case LINUX -> LINUX_VERSION;
+                case OSX, WIN32 -> {
+                    logger.error("""
+					****
+					Running on Mac or Windows. This is not recommended. Operations may fail.
+					Mac and Windows use MariaDB {}. Switch to Linux to run MariaDB {}
+					****
+					""", BAD_OS_VERSION, LINUX_VERSION);
+                    yield BAD_OS_VERSION;
+                }
+                default -> { throw new IllegalStateException(
                         "OS not directly supported, please use setDatabaseVersion() to set the name "
                                 + "of the package that the binaries are in, for: "
-                                + SystemUtils.OS_VERSION);
+                                + getOS()); }
+            };
+            databaseVersion = "mariadb-" + mariaDbVersion;
         }
         return databaseVersion;
     }

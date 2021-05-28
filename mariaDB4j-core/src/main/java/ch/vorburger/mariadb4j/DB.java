@@ -29,9 +29,17 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
@@ -412,16 +420,46 @@ public class DB {
         try {
             Util.extractFromClasspathToFile(configuration.getBinariesClassPathLocation(), baseDir);
             if (!configuration.isWindows()) {
-                Util.forceExecutable(newExecutableFile("bin", "my_print_defaults"));
-                Util.forceExecutable(newExecutableFile("bin", "mysql_install_db"));
-                Util.forceExecutable(newExecutableFile("scripts", "mysql_install_db"));
-                Util.forceExecutable(newExecutableFile("bin", "mysqld"));
-                Util.forceExecutable(newExecutableFile("bin", "mysqldump"));
-                Util.forceExecutable(newExecutableFile("bin", "mysql"));
+                Path basePath = baseDir.toPath();
+                Stream.of("bin", "scripts").map(basePath::resolve).filter(Files::isDirectory).forEach(dir -> {
+                    healSymlinks(dir);
+                    try (Stream<Path> executables = Files.list(dir)) {
+                        executables
+                                .filter(Predicate.not(Files::isSymbolicLink))
+                                .forEach(Util::forceExecutable);
+                    } catch (IOException ex) {
+                        throw new UncheckedIOException(ex);
+                    }
+                });
             }
         } catch (IOException e) {
-            throw new RuntimeException("Error unpacking embedded DB", e);
+            throw new UncheckedIOException("Error unpacking embedded DB", e);
         }
+    }
+
+    // MariaDB 10.5 makes the 'mysql' commands symlinks to the mariadb commands
+    // However, the MariaDB4j packaging and extracting process removes symlinks
+    private static final Map<String, String> SYMLINKS = Map.of(
+            "mariadb", "mysql",
+            "mariadbd", "mysqld",
+            "mariadb-dump", "mysqldump",
+            "mariadb-install-db", "mysql_install_db");
+    private void healSymlinks(Path directory) {
+        Logger logger = LoggerFactory.getLogger(getClass());
+        SYMLINKS.forEach((mariadbName, mysqlName) -> {
+            logger.trace("Fixing symlink from {} to {}", mariadbName, mysqlName);
+            Path executable = directory.resolve(mariadbName);
+            Path symlink = directory.resolve(mysqlName);
+            try {
+                if (Files.exists(executable) && Files.exists(symlink) && Files.size(symlink) == 0) {
+                    Files.delete(symlink);
+                    Files.createSymbolicLink(symlink, executable);
+                    logger.trace("Fixed symlink from {} to {}", mysqlName, mariadbName);
+                }
+            } catch (IOException ex) {
+                throw new UncheckedIOException(ex);
+            }
+        });
     }
 
     /**
@@ -451,6 +489,9 @@ public class DB {
     protected void cleanupOnExit() {
         String threadName = "Shutdown Hook Deletion Thread for Temporary DB " + dataDir.toString();
         final DB db = this;
+        boolean cleanupDirs = configuration.isDeletingTemporaryBaseAndDataDirsOnShutdown();
+        Path dataDir = this.dataDir.toPath();
+        Path baseDir = this.baseDir.toPath();
         Runtime.getRuntime().addShutdownHook(new Thread(threadName) {
 
             @Override
@@ -467,19 +508,30 @@ public class DB {
                 } catch (ManagedProcessException e) {
                     logger.warn("cleanupOnExit() ShutdownHook: An error occurred while stopping the database", e);
                 }
-
-                if (dataDir.exists() && (configuration.isDeletingTemporaryBaseAndDataDirsOnShutdown()
-                                    && Util.isTemporaryDirectory(dataDir.getAbsolutePath()))) {
-                    logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB data directory: " + dataDir);
-                    FileUtils.deleteQuietly(dataDir);
-                }
-                if (baseDir.exists() && (configuration.isDeletingTemporaryBaseAndDataDirsOnShutdown()
-                                    && Util.isTemporaryDirectory(baseDir.getAbsolutePath()))) {
-                    logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB base directory: " + baseDir);
-                    FileUtils.deleteQuietly(baseDir);
+                if (cleanupDirs) {
+                    deleteRecursively(dataDir);
+                    deleteRecursively(baseDir);
                 }
             }
         });
+    }
+
+    private static void deleteRecursively(Path directory) {
+        if (!Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
+            return;
+        }
+        logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB directory: {}", directory);
+        try (Stream<Path> toDelete = Files.walk(directory)) {
+            toDelete.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ex) {
+                    throw new UncheckedIOException(ex);
+                }
+            });
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
     // The dump*() methods are intentionally *NOT* made "synchronized",

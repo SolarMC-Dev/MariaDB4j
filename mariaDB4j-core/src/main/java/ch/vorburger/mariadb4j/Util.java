@@ -21,7 +21,11 @@ package ch.vorburger.mariadb4j;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.slf4j.Logger;
@@ -104,6 +108,14 @@ public class Util {
         }
     }
 
+    public static void forceExecutable(Path executableFile) {
+        try {
+            forceExecutable(executableFile.toFile());
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
+    }
+
     /**
      * Extract files from a package on the classpath into a directory.
      *
@@ -122,30 +134,30 @@ public class Util {
         }
         int counter = 0;
         for (Resource resource : resources) {
-            if (resource.isReadable()) { // Skip hidden or system files
-                final URL url = resource.getURL();
-                String path = url.toString();
-                if (!path.endsWith("/")) { // Skip directories
-                    int p = path.lastIndexOf(packagePath) + packagePath.length();
-                    path = path.substring(p);
-                    final File targetFile = new File(toDir, path);
-                    long len = resource.contentLength();
-                    if (!targetFile.exists() || targetFile.length() != len) { // Only copy new files
-                        tryN(5, 500, new Procedure<IOException>() {
+            // Skip hidden or system files
+            final URL url = resource.getURL();
+            String path = url.toString();
+            if (!path.endsWith("/")) { // Skip directories
+                int p = path.lastIndexOf(packagePath) + packagePath.length();
+                path = path.substring(p);
+                final File targetFile = new File(toDir, path);
+                long len = resource.contentLength();
+                if (!targetFile.exists() || targetFile.length() != len) { // Only copy new files
+                    tryN(5, 500, new Procedure<IOException>() {
 
-                            @Override
-                            public void apply() throws IOException {
-                                FileUtils.copyURLToFile(url, targetFile);
-                            }
-                        });
-                        counter++;
-                    }
+                        @Override
+                        public void apply() throws IOException {
+                            FileUtils.copyURLToFile(url, targetFile);
+                        }
+                    });
+                    counter++;
                 }
             }
         }
         if (counter > 0) {
-            Object[] info = new Object[] { counter, locationPattern, toDir };
-            logger.info("Unpacked {} files from {} to {}", info);
+            logger.info("Unpacked {} files from {} to {}", counter, locationPattern, toDir);
+        } else {
+            logger.warn("Unpacked no files from {} to {}", locationPattern, toDir);
         }
         return counter;
     }

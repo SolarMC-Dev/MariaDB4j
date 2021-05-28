@@ -23,6 +23,8 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.apache.commons.io.FileUtils;
 import org.junit.Test;
@@ -40,17 +42,18 @@ import ch.vorburger.exec.ManagedProcessException;
  */
 public class StartSimulatedForAllPlatformsTest {
 
+    /*@Disabled
     @Test public void simulatedStartWin32() throws Exception {
         checkPlatformStart(DBConfigurationBuilder.WIN32);
-    }
+    }*/
 
     @Test public void simulatedStartLinux() throws Exception {
         checkPlatformStart(DBConfigurationBuilder.LINUX);
     }
 
-    @Test public void simulatedStartOSX() throws Exception {
+    /*@Test public void simulatedStartOSX() throws Exception {
         checkPlatformStart(DBConfigurationBuilder.OSX);
-    }
+    }*/
 
     void checkPlatformStart(String platform) throws ManagedProcessException, IOException {
         DBConfigurationBuilder configBuilder = DBConfigurationBuilder.newBuilder();
@@ -74,8 +77,8 @@ public class StartSimulatedForAllPlatformsTest {
     }
 
     void checkManagedProcessExists(ManagedProcess proc) {
-        File installProcFile = proc.getExecutableFile();
-        assertTrue("Does not exist: " + installProcFile.toString(), installProcFile.exists());
-        assertTrue("Is not a File: " + installProcFile.toString(), installProcFile.isFile());
+        Path installProcFile = proc.getExecutableFile().toPath();
+        assertTrue("Does not exist: " + installProcFile, Files.exists(installProcFile));
+        assertTrue("Is not a File: " + installProcFile, Files.isRegularFile(installProcFile));
     }
 }
