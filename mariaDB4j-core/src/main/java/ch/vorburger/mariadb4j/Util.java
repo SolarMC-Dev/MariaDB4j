@@ -19,16 +19,6 @@
  */
 package ch.vorburger.mariadb4j;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.HashSet;
-import java.util.Set;
-
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,13 +26,28 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.net.URL;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * File utilities.
  *
  * @author Michael Vorburger
  * @author Michael Seaton
  */
-public class Util {
+public final class Util {
 
     private static final Logger logger = LoggerFactory.getLogger(Util.class);
 
@@ -57,29 +62,19 @@ public class Util {
      * @return safe File object representing that path name
      * @throws IllegalArgumentException If it is not a directory, or it is not readable
      */
-    public static File getDirectory(String path) {
-        boolean log = false;
-        File dir = new File(path);
-        if (!dir.exists()) {
-            log = true;
-            try {
-                FileUtils.forceMkdir(dir);
-            } catch (IOException e) {
-                throw new IllegalArgumentException("Unable to create new directory at path: " + path, e);
-            }
+    public static Path getDirectory(String path) {
+        Path dir = Path.of(path).toAbsolutePath();
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Unable to create new directory at path: " + path, e);
         }
-        String absPath = dir.getAbsolutePath();
+        String absPath = dir.toString();
         if (absPath.trim().length() == 0) {
             throw new IllegalArgumentException(path + " is empty");
         }
-        if (!dir.isDirectory()) {
-            throw new IllegalArgumentException(path + " is not a directory");
-        }
-        if (!dir.canRead()) {
+        if (!Files.isReadable(dir)) {
             throw new IllegalArgumentException(path + " is not a readable directory");
-        }
-        if (log) {
-            logger.info("Created directory: " + absPath);
         }
         return dir;
     }
@@ -94,25 +89,26 @@ public class Util {
         return directory.startsWith(SystemUtils.JAVA_IO_TMPDIR);
     }
 
-    public static void forceExecutable(File executableFile) throws IOException {
-        if (executableFile.exists()) {
-            if (!executableFile.canExecute()) {
-                boolean succeeded = executableFile.setExecutable(true);
-                if (succeeded) {
-                    logger.info("chmod +x {} (using java.io.File.setExecutable)", executableFile);
-                } else {
-                    throw new IOException("Failed to do chmod +x " + executableFile.toString()
-                            + " using java.io.File.setExecutable, which will be a problem on *NIX...");
-                }
-            }
-        } else {
-            logger.info("chmod +x requested on non-existing file: {}", executableFile);
-        }
-    }
-
     public static void forceExecutable(Path executableFile) {
+        if (Files.notExists(executableFile)) {
+            logger.info("chmod +x requested on non-existing file: {}", executableFile);
+            return;
+        }
         try {
-            forceExecutable(executableFile.toFile());
+            PosixFileAttributeView view;
+            try {
+                view = Files.getFileAttributeView(executableFile, PosixFileAttributeView.class);
+            } catch (UnsupportedOperationException ex) {
+                // Windows does not support POSIX
+                return;
+            }
+            Set<PosixFilePermission> perms = view.readAttributes().permissions();
+            if (!perms.add(PosixFilePermission.OWNER_EXECUTE)) {
+                // Already executable
+                return;
+            }
+            view.setPermissions(perms);
+            logger.info("chmod +x {} (using PosixFileAttributeView.setPermissions)", executableFile);
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
         }
@@ -127,7 +123,7 @@ public class Util {
      * @throws java.io.IOException if something goes wrong, including if nothing was found on
      *             classpath
      */
-    public static int extractFromClasspathToFile(String packagePath, File toDir) throws IOException {
+    public static int extractFromClasspathToFile(String packagePath, Path toDir) throws IOException {
         String locationPattern = "classpath*:" + packagePath + "/**";
         ResourcePatternResolver resourcePatternResolver = new PathMatchingResourcePatternResolver();
         Resource[] resources = resourcePatternResolver.getResources(locationPattern);
@@ -143,14 +139,16 @@ public class Util {
             if (!path.endsWith("/")) { // Skip directories
                 int p = path.lastIndexOf(packagePath) + packagePath.length();
                 path = path.substring(p);
-                final File targetFile = new File(toDir, path);
+                Path targetFile = toDir.resolve(path).toRealPath();
                 long len = resource.contentLength();
-                if (!targetFile.exists() || targetFile.length() != len) { // Only copy new files
-                    FileUtils.copyURLToFile(url, targetFile);
+                if (Files.notExists(targetFile) || Files.size(targetFile) != len) { // Only copy new files
+                    try (InputStream urlStream = url.openStream();
+                         ReadableByteChannel urlChannel = Channels.newChannel(urlStream);
+                         FileChannel output = FileChannel.open(targetFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                        output.transferFrom(urlChannel, 0, Long.MAX_VALUE);
+                    }
                     counter++;
                     unpacked.add(path);
-                } else {
-                    logger.trace("Not unpacking {} because it exists or its length is {}", path, len);
                 }
             }
         }
@@ -162,29 +160,4 @@ public class Util {
         return counter;
     }
 
-    @SuppressWarnings("null")
-    private static void tryN(int n, long msToWait, Procedure<IOException> procedure) throws IOException {
-        IOException lastIOException = null;
-        int numAttempts = 0;
-        while (numAttempts++ < n) {
-            try {
-                procedure.apply();
-                return;
-            } catch (IOException e) {
-                lastIOException = e;
-                logger.warn("Failure {} of {}, retrying again in {}ms", numAttempts, n, msToWait, e);
-                try {
-                    Thread.sleep(msToWait);
-                } catch (InterruptedException interruptedException) {
-                    // Ignore
-                }
-            }
-        }
-        throw lastIOException;
-    }
-
-    private static interface Procedure<E extends Throwable> {
-
-        void apply() throws E;
-    }
 }
