@@ -19,14 +19,6 @@
  */
 package ch.vorburger.mariadb4j;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,13 +26,31 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.net.URL;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.OpenOption;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.stream.Stream;
+
 /**
  * File utilities.
  *
  * @author Michael Vorburger
  * @author Michael Seaton
  */
-public class Util {
+public final class Util {
 
     private static final Logger logger = LoggerFactory.getLogger(Util.class);
 
@@ -55,29 +65,19 @@ public class Util {
      * @return safe File object representing that path name
      * @throws IllegalArgumentException If it is not a directory, or it is not readable
      */
-    public static File getDirectory(String path) {
-        boolean log = false;
-        File dir = new File(path);
-        if (!dir.exists()) {
-            log = true;
-            try {
-                FileUtils.forceMkdir(dir);
-            } catch (IOException e) {
-                throw new IllegalArgumentException("Unable to create new directory at path: " + path, e);
-            }
+    public static Path getDirectory(String path) {
+        Path dir = Path.of(path).toAbsolutePath();
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Unable to create new directory at path: " + path, e);
         }
-        String absPath = dir.getAbsolutePath();
-        if (absPath.trim().length() == 0) {
+        String absPath = dir.toString();
+        if (absPath.isBlank()) {
             throw new IllegalArgumentException(path + " is empty");
         }
-        if (!dir.isDirectory()) {
-            throw new IllegalArgumentException(path + " is not a directory");
-        }
-        if (!dir.canRead()) {
+        if (!Files.isReadable(dir)) {
             throw new IllegalArgumentException(path + " is not a readable directory");
-        }
-        if (log) {
-            logger.info("Created directory: " + absPath);
         }
         return dir;
     }
@@ -92,25 +92,26 @@ public class Util {
         return directory.startsWith(SystemUtils.JAVA_IO_TMPDIR);
     }
 
-    public static void forceExecutable(File executableFile) throws IOException {
-        if (executableFile.exists()) {
-            if (!executableFile.canExecute()) {
-                boolean succeeded = executableFile.setExecutable(true);
-                if (succeeded) {
-                    logger.info("chmod +x {} (using java.io.File.setExecutable)", executableFile);
-                } else {
-                    throw new IOException("Failed to do chmod +x " + executableFile.toString()
-                            + " using java.io.File.setExecutable, which will be a problem on *NIX...");
-                }
-            }
-        } else {
-            logger.info("chmod +x requested on non-existing file: {}", executableFile);
-        }
-    }
-
     public static void forceExecutable(Path executableFile) {
+        if (Files.notExists(executableFile)) {
+            logger.info("chmod +x requested on non-existing file: {}", executableFile);
+            return;
+        }
         try {
-            forceExecutable(executableFile.toFile());
+            PosixFileAttributeView view;
+            try {
+                view = Files.getFileAttributeView(executableFile, PosixFileAttributeView.class);
+            } catch (UnsupportedOperationException ex) {
+                // Windows does not support POSIX
+                return;
+            }
+            Set<PosixFilePermission> perms = view.readAttributes().permissions();
+            if (!perms.add(PosixFilePermission.OWNER_EXECUTE)) {
+                // Already executable
+                return;
+            }
+            view.setPermissions(perms);
+            logger.info("chmod +x {} (using PosixFileAttributeView.setPermissions)", executableFile);
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
         }
@@ -125,13 +126,14 @@ public class Util {
      * @throws java.io.IOException if something goes wrong, including if nothing was found on
      *             classpath
      */
-    public static int extractFromClasspathToFile(String packagePath, File toDir) throws IOException {
+    public static int extractFromClasspathToFile(String packagePath, Path toDir) throws IOException {
         String locationPattern = "classpath*:" + packagePath + "/**";
         ResourcePatternResolver resourcePatternResolver = new PathMatchingResourcePatternResolver();
         Resource[] resources = resourcePatternResolver.getResources(locationPattern);
         if (resources.length == 0) {
             throw new IOException("Nothing found at " + locationPattern);
         }
+        Set<String> unpacked = new HashSet<>();
         int counter = 0;
         for (Resource resource : resources) {
             // Skip hidden or system files
@@ -140,51 +142,61 @@ public class Util {
             if (!path.endsWith("/")) { // Skip directories
                 int p = path.lastIndexOf(packagePath) + packagePath.length();
                 path = path.substring(p);
-                final File targetFile = new File(toDir, path);
-                long len = resource.contentLength();
-                if (!targetFile.exists() || targetFile.length() != len) { // Only copy new files
-                    tryN(5, 500, new Procedure<IOException>() {
-
-                        @Override
-                        public void apply() throws IOException {
-                            FileUtils.copyURLToFile(url, targetFile);
-                        }
-                    });
+                if (path.startsWith("/")) {
+                    path = path.substring(1);
+                }
+                Path targetFile = toDir.resolve(path);
+                // Resources of length 0 are symlinks
+                long length = resource.contentLength();
+                boolean newFile = Files.notExists(targetFile);
+                /*
+                 * Only copy files if:
+                 * 1. Target does not exist
+                 * 2. Resource is not a symlink and the target has a different length
+                 */
+                if (newFile || length != 0 && Files.size(targetFile) != length) { // Only copy new files
+                    logger.trace("Copying resource {} to {}. New file: {}", path, toDir, newFile);
+                    Set<OpenOption> openOptions;
+                    if (newFile) {
+                        Files.createDirectories(targetFile.getParent());
+                        openOptions = Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                    } else {
+                        openOptions = Set.of(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+                    }
+                    try (InputStream urlStream = url.openStream();
+                         ReadableByteChannel urlChannel = Channels.newChannel(urlStream);
+                         FileChannel output = FileChannel.open(targetFile, openOptions)) {
+                        output.transferFrom(urlChannel, 0, Long.MAX_VALUE);
+                    }
                     counter++;
+                    unpacked.add(path);
                 }
             }
         }
-        if (counter > 0) {
-            logger.info("Unpacked {} files from {} to {}", counter, locationPattern, toDir);
+        if (logger.isDebugEnabled()) {
+            logger.debug("Unpacked {} files from {} to {} : {}", counter, locationPattern, toDir, unpacked);
         } else {
-            logger.warn("Unpacked no files from {} to {}", locationPattern, toDir);
+            logger.info("Unpacked {} files from {} to {}", counter, locationPattern, toDir);
         }
         return counter;
     }
 
-    @SuppressWarnings("null")
-    private static void tryN(int n, long msToWait, Procedure<IOException> procedure) throws IOException {
-        IOException lastIOException = null;
-        int numAttempts = 0;
-        while (numAttempts++ < n) {
-            try {
-                procedure.apply();
-                return;
-            } catch (IOException e) {
-                lastIOException = e;
-                logger.warn("Failure {} of {}, retrying again in {}ms", numAttempts, n, msToWait, e);
-                try {
-                    Thread.sleep(msToWait);
-                } catch (InterruptedException interruptedException) {
-                    // Ignore
-                }
-            }
+    public static void deleteRecursively(Path directory) {
+        if (!Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
+            return;
         }
-        throw lastIOException;
+        logger.info("cleanupOnExit() shutdown hook deleting temporary DB directory: {}", directory);
+        try (Stream<Path> toDelete = Files.walk(directory)) {
+            toDelete.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ex) {
+                    throw new UncheckedIOException(ex);
+                }
+            });
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
-    private static interface Procedure<E extends Throwable> {
-
-        void apply() throws E;
-    }
 }

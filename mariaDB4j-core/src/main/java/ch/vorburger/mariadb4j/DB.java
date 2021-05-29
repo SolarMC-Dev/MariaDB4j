@@ -61,7 +61,7 @@ public class DB {
 
     protected final DBConfiguration configuration;
 
-    private File baseDir;
+    private Path baseDir;
     private File libDir;
     private File dataDir;
     private ManagedProcess mysqldProcess;
@@ -109,19 +109,19 @@ public class DB {
 
     protected ManagedProcess createDBInstallProcess() throws ManagedProcessException, IOException {
         logger.info("Installing a new embedded database to: " + baseDir);
-        File installDbCmdFile = newExecutableFile("bin", "mysql_install_db");
-        if (!installDbCmdFile.exists())
+        Path installDbCmdFile = newExecutableFile("bin", "mysql_install_db");
+        if (Files.notExists(installDbCmdFile))
             installDbCmdFile = newExecutableFile("scripts", "mysql_install_db");
-        if (!installDbCmdFile.exists())
+        if (Files.notExists(installDbCmdFile))
             throw new ManagedProcessException(
-                    "mysql_install_db was not found, neither in bin/ nor in scripts/ under " + baseDir.getAbsolutePath());
-        ManagedProcessBuilder builder = new ManagedProcessBuilder(installDbCmdFile);
+                    "mysql_install_db was not found, neither in bin/ nor in scripts/ under " + baseDir.toAbsolutePath());
+        ManagedProcessBuilder builder = new ManagedProcessBuilder(installDbCmdFile.toFile());
         builder.setOutputStreamLogDispatcher(getOutputStreamLogDispatcher("mysql_install_db"));
         builder.getEnvironment().put(configuration.getOSLibraryEnvironmentVarName(), libDir.getAbsolutePath());
-        builder.setWorkingDirectory(baseDir);
+        builder.setWorkingDirectory(baseDir.toFile());
         if (!configuration.isWindows()) {
             builder.addFileArgument("--datadir", dataDir);
-            builder.addFileArgument("--basedir", baseDir);
+            builder.addFileArgument("--basedir", baseDir.toFile());
             builder.addArgument("--no-defaults");
             builder.addArgument("--force");
             builder.addArgument("--skip-name-resolve");
@@ -186,7 +186,7 @@ public class DB {
     }
 
     synchronized ManagedProcess startPreparation() throws ManagedProcessException, IOException {
-        ManagedProcessBuilder builder = new ManagedProcessBuilder(newExecutableFile("bin", "mysqld"));
+        ManagedProcessBuilder builder = new ManagedProcessBuilder(newExecutableFile("bin", "mysqld").toFile());
         builder.setOutputStreamLogDispatcher(getOutputStreamLogDispatcher("mysqld"));
         builder.getEnvironment().put(configuration.getOSLibraryEnvironmentVarName(), libDir.getAbsolutePath());
         builder.addArgument("--no-defaults"); // *** THIS MUST COME FIRST ***
@@ -197,7 +197,7 @@ public class DB {
         if (! hasArgument("--max_allowed_packet")) {
             builder.addArgument("--max_allowed_packet=64M");
         }
-        builder.addFileArgument("--basedir", baseDir).setWorkingDirectory(baseDir);
+        builder.addFileArgument("--basedir", baseDir.toFile()).setWorkingDirectory(baseDir.toFile());
         if (!configuration.isWindows()) {
             builder.addFileArgument("--datadir", dataDir);
         } else {
@@ -224,8 +224,8 @@ public class DB {
         return false;
     }
 
-    protected File newExecutableFile(String dir, String exec) {
-        return new File(baseDir, dir + "/" + exec + getWinExeExt());
+    protected Path newExecutableFile(String dir, String exec) {
+        return baseDir.resolve(dir).resolve(exec + getWinExeExt());
     }
 
     protected void addPortAndMaybeSocketArguments(ManagedProcessBuilder builder) throws IOException {
@@ -353,9 +353,9 @@ public class DB {
             throws ManagedProcessException {
         logger.info("Running a " + logInfoText);
         try {
-            ManagedProcessBuilder builder = new ManagedProcessBuilder(newExecutableFile("bin", "mysql"));
+            ManagedProcessBuilder builder = new ManagedProcessBuilder(newExecutableFile("bin", "mysql").toFile());
             builder.setOutputStreamLogDispatcher(getOutputStreamLogDispatcher("mysql"));
-            builder.setWorkingDirectory(baseDir);
+            builder.setWorkingDirectory(baseDir.toFile());
             if (username != null && !username.isEmpty())
                 builder.addArgument("-u", username);
             if (password != null && !password.isEmpty())
@@ -420,8 +420,7 @@ public class DB {
         try {
             Util.extractFromClasspathToFile(configuration.getBinariesClassPathLocation(), baseDir);
             if (!configuration.isWindows()) {
-                Path basePath = baseDir.toPath();
-                Stream.of("bin", "scripts").map(basePath::resolve).filter(Files::isDirectory).forEach(dir -> {
+                Stream.of("bin", "scripts").map(baseDir::resolve).filter(Files::isDirectory).forEach(dir -> {
                     healSymlinks(dir);
                     try (Stream<Path> executables = Files.list(dir)) {
                         executables
@@ -470,13 +469,13 @@ public class DB {
      */
     protected void prepareDirectories() throws ManagedProcessException {
         baseDir = Util.getDirectory(configuration.getBaseDir());
-        libDir = Util.getDirectory(configuration.getLibDir());
+        libDir = Util.getDirectory(configuration.getLibDir()).toFile();
         try {
             String dataDirPath = configuration.getDataDir();
             if (Util.isTemporaryDirectory(dataDirPath)) {
                 FileUtils.deleteDirectory(new File(dataDirPath));
             }
-            dataDir = Util.getDirectory(dataDirPath);
+            dataDir = Util.getDirectory(dataDirPath).toFile();
         } catch (Exception e) {
             throw new ManagedProcessException("An error occurred while preparing the data directory", e);
         }
@@ -491,7 +490,7 @@ public class DB {
         final DB db = this;
         boolean cleanupDirs = configuration.isDeletingTemporaryBaseAndDataDirsOnShutdown();
         Path dataDir = this.dataDir.toPath();
-        Path baseDir = this.baseDir.toPath();
+        Path baseDir = this.baseDir;
         Runtime.getRuntime().addShutdownHook(new Thread(threadName) {
 
             @Override
@@ -509,29 +508,11 @@ public class DB {
                     logger.warn("cleanupOnExit() ShutdownHook: An error occurred while stopping the database", e);
                 }
                 if (cleanupDirs) {
-                    deleteRecursively(dataDir);
-                    deleteRecursively(baseDir);
+                    Util.deleteRecursively(dataDir);
+                    Util.deleteRecursively(baseDir);
                 }
             }
         });
-    }
-
-    private static void deleteRecursively(Path directory) {
-        if (!Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
-            return;
-        }
-        logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB directory: {}", directory);
-        try (Stream<Path> toDelete = Files.walk(directory)) {
-            toDelete.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException ex) {
-                    throw new UncheckedIOException(ex);
-                }
-            });
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-        }
     }
 
     // The dump*() methods are intentionally *NOT* made "synchronized",
@@ -555,8 +536,7 @@ public class DB {
                                                boolean compactDump, boolean lockTables, boolean asXml,
                                                String user, String password)
             throws ManagedProcessException, IOException {
-
-        ManagedProcessBuilder builder = new ManagedProcessBuilder(newExecutableFile("bin", "mysqldump"));
+        ManagedProcessBuilder builder = new ManagedProcessBuilder(newExecutableFile("bin", "mysqldump").toFile());
 
         builder.addStdOut(new BufferedOutputStream(new FileOutputStream(outputFile)));
         builder.setOutputStreamLogDispatcher(getOutputStreamLogDispatcher("mysqldump"));
@@ -574,10 +554,10 @@ public class DB {
         if (asXml) {
             builder.addArgument("--xml");
         }
-        if (StringUtils.isNotBlank(user)) {
+        if (user != null && !user.isBlank()) {
             builder.addArgument("-u");
             builder.addArgument(user);
-            if (StringUtils.isNotBlank(password)) {
+            if (password != null && !password.isBlank()) {
                 builder.addArgument("-p" + password);
             }
         }

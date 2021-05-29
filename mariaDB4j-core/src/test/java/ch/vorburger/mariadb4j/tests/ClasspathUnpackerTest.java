@@ -19,10 +19,10 @@
  */
 package ch.vorburger.mariadb4j.tests;
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
-import org.apache.commons.io.FileUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -36,32 +36,35 @@ import ch.vorburger.mariadb4j.Util;
  */
 public class ClasspathUnpackerTest {
 
+    private Path newCleanDir(String name) throws IOException {
+        Path dir = Path.of("target").resolve("test-unpack").resolve(name);
+        Util.deleteRecursively(dir);
+        return dir;
+    }
+
     @Test
     public void testClasspathUnpackerFromUniqueClasspath() throws IOException {
-        File toDir = new File("target/testUnpack1");
-        FileUtils.deleteDirectory(toDir);
+        Path toDir = newCleanDir("testUnpack1");
         Util.extractFromClasspathToFile("org/apache/commons/exec", toDir);
-        Assert.assertTrue(new File(toDir, "CommandLine.class").exists());
+        Assert.assertTrue(Files.exists(toDir.resolve("CommandLine.class")));
     }
 
     @Test(expected = IOException.class)
     @Ignore
     // Not yet implemented... not really important
     public void testClasspathUnpackerFromDuplicateClasspath() throws IOException {
-        File toDir = new File("target/testUnpack3");
-        FileUtils.deleteDirectory(toDir);
+        Path toDir = newCleanDir("testUnpack3");
         Util.extractFromClasspathToFile("META-INF/maven", toDir);
     }
 
     @Test
     public void testClasspathUnpackerFromFilesystem() throws IOException {
-        File toDir = new File("target/testUnpack3");
-        FileUtils.deleteDirectory(toDir);
+        Path toDir = newCleanDir("testUnpack3");
         int c1 = Util.extractFromClasspathToFile("test", toDir);
         Assert.assertEquals(3, c1);
-        Assert.assertTrue(new File(toDir, "a.txt").exists());
-        Assert.assertTrue(new File(toDir, "b.txt").exists());
-        Assert.assertTrue(new File(toDir, "subdir/c.txt").exists());
+        Assert.assertTrue(Files.exists(toDir.resolve("a.txt")));
+        Assert.assertTrue(Files.exists(toDir.resolve("b.txt")));
+        Assert.assertTrue(Files.exists(toDir.resolve("subdir/c.txt")));
 
         // Now try again - it shouldn't copy anything anymore (optimization)
         int c2 = Util.extractFromClasspathToFile("test", toDir);
@@ -70,15 +73,13 @@ public class ClasspathUnpackerTest {
 
     @Test(expected = IOException.class)
     public void testClasspathUnpackerPathDoesNotExist() throws IOException {
-        File toDir = new File("target/testUnpack4");
-        FileUtils.deleteDirectory(toDir);
+        Path toDir = newCleanDir("testUnpack4");
         Util.extractFromClasspathToFile("does/not/exist", toDir);
     }
 
     @Test(expected = IOException.class)
     public void testClasspathUnpackerPackageExistsButIsEmpty() throws IOException {
-        File toDir = new File("target/testUnpack4");
-        FileUtils.deleteDirectory(toDir);
+        Path toDir = newCleanDir("testUnpack4");
         Util.extractFromClasspathToFile("test/empty", toDir);
     }
 
