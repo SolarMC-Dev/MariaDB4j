@@ -34,6 +34,7 @@ import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.file.Files;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFileAttributeView;
@@ -72,7 +73,7 @@ public final class Util {
             throw new IllegalArgumentException("Unable to create new directory at path: " + path, e);
         }
         String absPath = dir.toString();
-        if (absPath.trim().length() == 0) {
+        if (absPath.isBlank()) {
             throw new IllegalArgumentException(path + " is empty");
         }
         if (!Files.isReadable(dir)) {
@@ -145,20 +146,30 @@ public final class Util {
                     path = path.substring(1);
                 }
                 Path targetFile = toDir.resolve(path);
-                logger.trace("Target directory {} and path {} resolves to {}", toDir, path, targetFile);
-                long len = resource.contentLength();
-                if (Files.notExists(targetFile)
-                        || Files.size(targetFile.toRealPath()) != len) { // Only copy new files
-                    Files.createDirectories(targetFile.getParent());
+                // Resources of length 0 are symlinks
+                long length = resource.contentLength();
+                boolean newFile = Files.notExists(targetFile);
+                /*
+                 * Only copy files if:
+                 * 1. Target does not exist
+                 * 2. Resource is not a symlink and the target has a different length
+                 */
+                if (newFile || length != 0 && Files.size(targetFile) != length) { // Only copy new files
+                    logger.trace("Copying resource {} to {}. New file: {}", path, toDir, newFile);
+                    Set<OpenOption> openOptions;
+                    if (newFile) {
+                        Files.createDirectories(targetFile.getParent());
+                        openOptions = Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                    } else {
+                        openOptions = Set.of(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+                    }
                     try (InputStream urlStream = url.openStream();
                          ReadableByteChannel urlChannel = Channels.newChannel(urlStream);
-                         FileChannel output = FileChannel.open(targetFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                         FileChannel output = FileChannel.open(targetFile, openOptions)) {
                         output.transferFrom(urlChannel, 0, Long.MAX_VALUE);
                     }
                     counter++;
                     unpacked.add(path);
-                } else {
-                    logger.trace("Skipping copy of {} to {}", path, toDir);
                 }
             }
         }
@@ -174,7 +185,7 @@ public final class Util {
         if (!Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
             return;
         }
-        logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB directory: {}", directory);
+        logger.info("cleanupOnExit() shutdown hook deleting temporary DB directory: {}", directory);
         try (Stream<Path> toDelete = Files.walk(directory)) {
             toDelete.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
