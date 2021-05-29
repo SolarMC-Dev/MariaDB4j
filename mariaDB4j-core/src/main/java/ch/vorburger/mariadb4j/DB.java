@@ -517,7 +517,7 @@ public class DB {
     }
 
     private static void deleteRecursively(Path directory) {
-        if (!Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
+        if (true || !Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
             return;
         }
         logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB directory: {}", directory);
