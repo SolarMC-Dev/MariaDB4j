@@ -554,10 +554,10 @@ public class DB {
         if (asXml) {
             builder.addArgument("--xml");
         }
-        if (StringUtils.isNotBlank(user)) {
+        if (user != null && !user.isBlank()) {
             builder.addArgument("-u");
             builder.addArgument(user);
-            if (StringUtils.isNotBlank(password)) {
+            if (password != null && !password.isBlank()) {
                 builder.addArgument("-p" + password);
             }
         }
