@@ -25,6 +25,8 @@ import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.SystemUtils;
@@ -132,6 +134,7 @@ public class Util {
         if (resources.length == 0) {
             throw new IOException("Nothing found at " + locationPattern);
         }
+        Set<String> unpacked = new HashSet<>();
         int counter = 0;
         for (Resource resource : resources) {
             // Skip hidden or system files
@@ -143,21 +146,18 @@ public class Util {
                 final File targetFile = new File(toDir, path);
                 long len = resource.contentLength();
                 if (!targetFile.exists() || targetFile.length() != len) { // Only copy new files
-                    tryN(5, 500, new Procedure<IOException>() {
-
-                        @Override
-                        public void apply() throws IOException {
-                            FileUtils.copyURLToFile(url, targetFile);
-                        }
-                    });
+                    FileUtils.copyURLToFile(url, targetFile);
                     counter++;
+                    unpacked.add(path);
+                } else {
+                    logger.trace("Not unpacking {} because it exists or its length is {}", path, len);
                 }
             }
         }
-        if (counter > 0) {
-            logger.info("Unpacked {} files from {} to {}", counter, locationPattern, toDir);
+        if (logger.isDebugEnabled()) {
+            logger.debug("Unpacked {} files from {} to {} : {}", counter, locationPattern, toDir, unpacked);
         } else {
-            logger.warn("Unpacked no files from {} to {}", locationPattern, toDir);
+            logger.info("Unpacked {} files from {} to {}", counter, locationPattern, toDir);
         }
         return counter;
     }
