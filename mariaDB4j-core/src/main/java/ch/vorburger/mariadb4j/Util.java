@@ -157,6 +157,8 @@ public final class Util {
                     }
                     counter++;
                     unpacked.add(path);
+                } else {
+                    logger.trace("Skipping copy of {} to {}", path, toDir);
                 }
             }
         }
