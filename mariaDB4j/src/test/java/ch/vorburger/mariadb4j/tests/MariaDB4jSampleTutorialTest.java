@@ -27,6 +27,7 @@ import org.apache.commons.dbutils.DbUtils;
 import org.apache.commons.dbutils.QueryRunner;
 import org.apache.commons.dbutils.handlers.ColumnListHandler;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import ch.vorburger.mariadb4j.DB;
@@ -84,7 +85,12 @@ public class MariaDB4jSampleTutorialTest {
         }
     }
 
+    /*
+     * MariaDB 10.4.3 and later use the unix_socket authentication method for root@localhost
+     * As such, this test's success relies on process execution as root.
+     */
     @Test
+    @Ignore
     public void testEmbeddedMariaDB4jWithSecurity() throws Exception {
         DBConfigurationBuilder config = DBConfigurationBuilder.newBuilder();
         config.setPort(0); // 0 => autom. detect free port
