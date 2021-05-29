@@ -144,11 +144,11 @@ public final class Util {
                 if (path.startsWith("/")) {
                     path = path.substring(1);
                 }
-                Path targetFile = toDir.resolve(path).toRealPath();
+                Path targetFile = toDir.resolve(path);
                 logger.trace("Target directory {} and path {} resolves to {}", toDir, path, targetFile);
-                if (true) return 0;
                 long len = resource.contentLength();
-                if (Files.notExists(targetFile) || Files.size(targetFile) != len) { // Only copy new files
+                if (Files.notExists(targetFile)
+                        || Files.size(targetFile.toRealPath()) != len) { // Only copy new files
                     try (InputStream urlStream = url.openStream();
                          ReadableByteChannel urlChannel = Channels.newChannel(urlStream);
                          FileChannel output = FileChannel.open(targetFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
