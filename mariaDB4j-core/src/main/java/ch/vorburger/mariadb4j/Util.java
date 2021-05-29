@@ -38,8 +38,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * File utilities.
@@ -158,6 +160,24 @@ public final class Util {
             logger.info("Unpacked {} files from {} to {}", counter, locationPattern, toDir);
         }
         return counter;
+    }
+
+    public static void deleteRecursively(Path directory) {
+        if (!Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
+            return;
+        }
+        logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB directory: {}", directory);
+        try (Stream<Path> toDelete = Files.walk(directory)) {
+            toDelete.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ex) {
+                    throw new UncheckedIOException(ex);
+                }
+            });
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
 }

@@ -508,29 +508,11 @@ public class DB {
                     logger.warn("cleanupOnExit() ShutdownHook: An error occurred while stopping the database", e);
                 }
                 if (cleanupDirs) {
-                    deleteRecursively(dataDir);
-                    deleteRecursively(baseDir);
+                    Util.deleteRecursively(dataDir);
+                    Util.deleteRecursively(baseDir);
                 }
             }
         });
-    }
-
-    private static void deleteRecursively(Path directory) {
-        if (true || !Files.isDirectory(directory) || !Util.isTemporaryDirectory(directory.toAbsolutePath().toString())) {
-            return;
-        }
-        logger.info("cleanupOnExit() ShutdownHook quietly deleting temporary DB directory: {}", directory);
-        try (Stream<Path> toDelete = Files.walk(directory)) {
-            toDelete.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException ex) {
-                    throw new UncheckedIOException(ex);
-                }
-            });
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-        }
     }
 
     // The dump*() methods are intentionally *NOT* made "synchronized",
