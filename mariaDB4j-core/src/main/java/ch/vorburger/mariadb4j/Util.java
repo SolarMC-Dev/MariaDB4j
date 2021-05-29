@@ -141,6 +141,9 @@ public final class Util {
             if (!path.endsWith("/")) { // Skip directories
                 int p = path.lastIndexOf(packagePath) + packagePath.length();
                 path = path.substring(p);
+                if (path.startsWith("/")) {
+                    path = path.substring(1);
+                }
                 Path targetFile = toDir.resolve(path).toRealPath();
                 logger.trace("Target directory {} and path {} resolves to {}", toDir, path, targetFile);
                 if (true) return 0;
