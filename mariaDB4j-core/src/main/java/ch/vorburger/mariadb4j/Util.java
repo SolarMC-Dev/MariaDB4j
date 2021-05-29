@@ -142,6 +142,8 @@ public final class Util {
                 int p = path.lastIndexOf(packagePath) + packagePath.length();
                 path = path.substring(p);
                 Path targetFile = toDir.resolve(path).toRealPath();
+                logger.trace("Target directory {} and path {} resolves to {}", toDir, path, targetFile);
+                if (true) return 0;
                 long len = resource.contentLength();
                 if (Files.notExists(targetFile) || Files.size(targetFile) != len) { // Only copy new files
                     try (InputStream urlStream = url.openStream();
