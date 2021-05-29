@@ -149,6 +149,7 @@ public final class Util {
                 long len = resource.contentLength();
                 if (Files.notExists(targetFile)
                         || Files.size(targetFile.toRealPath()) != len) { // Only copy new files
+                    Files.createDirectories(targetFile.getParent());
                     try (InputStream urlStream = url.openStream();
                          ReadableByteChannel urlChannel = Channels.newChannel(urlStream);
                          FileChannel output = FileChannel.open(targetFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
