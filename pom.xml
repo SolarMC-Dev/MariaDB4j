@@ -20,7 +20,7 @@
              to work correctly, if the <parent> is not a SNAPSHOT;
              see https://github.com/vorburger/MariaDB4j/issues/43.
          -->
-        <developerConnection>scm:git:git@github.com:vorburger/MariaDB4j.git</developerConnection>
+        <developerConnection>scm:git:https://github.com/SolarMC-Dev/MariaDB4j.git</developerConnection>
         <tag>HEAD</tag>
     </scm>
 
